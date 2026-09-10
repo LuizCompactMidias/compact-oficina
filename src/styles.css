@@ -13,33 +13,20 @@
   --compact-gold-deep: #b97900;
   --compact-cream: #f7f5ef;
 }
-
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input, select, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
-
-.compact-grid {
-  background-image:
-    linear-gradient(rgba(240, 179, 35, .045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(240, 179, 35, .045) 1px, transparent 1px);
-  background-size: 36px 36px;
-}
-
-.compact-gold-text {
-  background: linear-gradient(135deg, #fff0a8 0%, #ffc43d 30%, #f0b323 58%, #b97900 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.compact-glow { box-shadow: 0 0 50px rgba(240,179,35,.16); }
-
-@keyframes compactFloat { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
-.compact-float { animation: compactFloat 5s ease-in-out infinite; }
-
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
-  .compact-float { animation: none; }
-}
+.compact-grid { background-image: linear-gradient(rgba(240,179,35,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(240,179,35,.045) 1px,transparent 1px); background-size:36px 36px; }
+.compact-gold-text { background:linear-gradient(135deg,#fff0a8 0%,#ffc43d 30%,#f0b323 58%,#b97900 100%); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.compact-glow { box-shadow:0 0 50px rgba(240,179,35,.16); }
+.field { width:100%; border:1px solid rgba(0,0,0,.1); border-radius:.75rem; padding:.75rem .875rem; background:#fff; outline:none; font-weight:500; transition:border-color .18s, box-shadow .18s; }
+.field:focus { border-color:rgba(240,179,35,.85); box-shadow:0 0 0 3px rgba(240,179,35,.1); }
+.goldButton { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border:0; border-radius:.75rem; background:#f0b323; padding:.72rem 1rem; color:#080808; font-size:.875rem; font-weight:900; cursor:pointer; transition:background .18s,transform .18s; }
+.goldButton:hover { background:#ffc43d; transform:translateY(-1px); }
+.goldButton:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+.secondaryButton { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border:1px solid rgba(0,0,0,.1); border-radius:.75rem; background:#fff; padding:.72rem 1rem; color:#17181a; font-size:.875rem; font-weight:800; cursor:pointer; }
+@keyframes compactFloat { 0%,100% { transform:translateY(0) } 50% { transform:translateY(-8px) } }
+.compact-float { animation:compactFloat 5s ease-in-out infinite; }
+@media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto}.compact-float{animation:none} }
