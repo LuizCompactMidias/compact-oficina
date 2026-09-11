@@ -1,12 +1,12 @@
 import { BRAND } from "@/lib/brand";
-import { getAppSettings } from "@/lib/app-settings";
+import { getAppSettings, type AppSettings } from "@/lib/app-settings";
 
 const esc=(value:unknown)=>String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
 const brl=(value:unknown)=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(Number(value??0));
 const date=(value:unknown)=>{if(!value)return"—";const parsed=new Date(String(value).length===10?`${String(value)}T12:00:00`:String(value));return Number.isNaN(parsed.getTime())?"—":parsed.toLocaleDateString("pt-BR")};
 
 export async function printQuoteDocument(quote:any){
-  const settings=await getAppSettings().catch(()=>({}));
+  const settings:AppSettings=await getAppSettings().catch(():AppSettings=>({}));
   const customer=quote.customers??{},vehicle=quote.vehicles??{};
   const parts=(quote.quote_items??[]).filter((item:any)=>item.item_type==="peca");
   const labor=(quote.quote_items??[]).filter((item:any)=>item.item_type==="mao_obra");
