@@ -63,8 +63,8 @@ export async function convertQuoteToWorkOrder(id: string) {
 export function quoteWhatsAppMessage(quote: any) {
   const customer = quote.customers ?? {};
   const vehicle = quote.vehicles ?? {};
-  const parts = (quote.quote_items ?? []).filter((item: any) => item.item_type === "peca");
-  const labor = (quote.quote_items ?? []).filter((item: any) => item.item_type === "mao_obra");
+  const parts = (quote.quote_items ?? []).filter((item: any) => item.item_type === "part");
+  const labor = (quote.quote_items ?? []).filter((item: any) => item.item_type === "service");
   const brl = (value: unknown) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value ?? 0));
   const lines = [
     `Olá, ${customer.name ?? "cliente"}!`, "",
