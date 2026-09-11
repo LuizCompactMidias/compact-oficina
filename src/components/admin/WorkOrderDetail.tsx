@@ -3,6 +3,7 @@ import { ArrowLeft, CheckCircle2, Clock3, CreditCard, FileText, Loader2, Receipt
 import { supabase } from "@/integrations/supabase/client";
 import { money, STATUS_LABEL, type OrderStatus } from "@/lib/porfirid-queries";
 import { printWorkOrderDocument } from "@/lib/work-order-documents";
+import { useAppSettings } from "@/lib/app-settings";
 import { CustomerTrackingPanel } from "@/components/admin/CustomerTrackingPanel";
 import { WorkOrderPartsPanel } from "@/components/admin/WorkOrderPartsPanel";
 import { WorkOrderPhotosPanel } from "@/components/admin/WorkOrderPhotosPanel";
@@ -10,7 +11,7 @@ import { ServiceExecutionCommissionPanel } from "@/components/admin/ServiceExecu
 
 const db = supabase as any;
 const workflow: OrderStatus[] = ["recepcao","diagnostico","aguardando_aprovacao","em_execucao","finalizacao","pronto_entrega","entregue"];
-const paymentMethods = ["PIX","Dinheiro","Débito","Crédito","Transferência","Outro"];
+const defaultPaymentMethods = ["PIX","Dinheiro","Débito","Crédito","Transferência","Outro"];
 const checklistLabels: Array<[string,string]> = [
   ["mileage_checked","Quilometragem conferida"],["fuel_checked","Nível de combustível"],["front_checked","Frente do veículo"],
   ["rear_checked","Traseira do veículo"],["left_side_checked","Lateral esquerda"],["right_side_checked","Lateral direita"],
@@ -20,6 +21,7 @@ const checklistLabels: Array<[string,string]> = [
 ];
 
 export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { orderId: string; onBack: () => void; userRole?: string }) {
+  const { data: settings } = useAppSettings();
   const [order,setOrder]=useState<any>(null);
   const [services,setServices]=useState<any[]>([]);
   const [parts,setParts]=useState<any[]>([]);
@@ -35,6 +37,14 @@ export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { order
   const [paymentMethod,setPaymentMethod]=useState("PIX");
   const [installments,setInstallments]=useState(1);
   const [edit,setEdit]=useState({diagnosis:"",customer_report:"",customer_notes:"",internal_notes:"",promised_at:"",mileage_in:"",fuel_level:""});
+
+  const enabledPaymentMethods = useMemo(() => settings?.payment_methods?.length ? settings.payment_methods : defaultPaymentMethods,[settings?.payment_methods]);
+  const requirePaymentBeforeDelivery = settings?.require_payment_before_delivery ?? true;
+  const allowPartialApproval = settings?.allow_partial_approval ?? true;
+
+  useEffect(()=>{
+    if(enabledPaymentMethods.length && !enabledPaymentMethods.includes(paymentMethod)) setPaymentMethod(enabledPaymentMethods[0]!);
+  },[enabledPaymentMethods,paymentMethod]);
 
   async function load(){
     setLoading(true); setError(null);
@@ -63,7 +73,7 @@ export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { order
   const currentIndex=order?workflow.indexOf(order.status as OrderStatus):-1;
   const nextStatus=currentIndex>=0&&currentIndex<workflow.length-1?workflow[currentIndex+1]:null;
   const waitingApproval=order?.status==="aguardando_aprovacao"&&!["aprovado","parcial"].includes(order?.approval_status);
-  const waitingPayment=nextStatus==="entregue"&&balance>0.009;
+  const waitingPayment=requirePaymentBeforeDelivery&&nextStatus==="entregue"&&balance>0.009;
   const closed=["entregue","cancelada"].includes(order?.status);
   const canAdvance=Boolean(nextStatus)&&!waitingApproval&&!waitingPayment&&!closed;
   const checklistDone=checklist?checklistLabels.filter(([key])=>Boolean(checklist[key])).length:0;
@@ -72,7 +82,7 @@ export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { order
     setSaving(true);setError(null);setSuccess(null);
     try{
       if(status==="em_execucao"&&!["aprovado","parcial"].includes(order.approval_status))throw new Error("Aprove o orçamento antes de iniciar a execução.");
-      if(status==="entregue"&&balance>0.009)throw new Error("Registre o pagamento integral antes da entrega.");
+      if(status==="entregue"&&requirePaymentBeforeDelivery&&balance>0.009)throw new Error("Registre o pagamento integral antes da entrega.");
       const patch:any={status,updated_at:new Date().toISOString()};
       if(status==="entregue")patch.delivered_at=new Date().toISOString();
       const {error}=await db.from("work_orders").update(patch).eq("id",orderId);if(error)throw error;
@@ -81,14 +91,17 @@ export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { order
     }catch(e:any){setError(e.message??"Não foi possível alterar o status.")}finally{setSaving(false)}
   }
 
-  async function approval(approved:boolean){
+  async function approval(status:"aprovado"|"parcial"|"recusado"){
     setSaving(true);setError(null);setSuccess(null);
     try{
-      const patch:any={approval_status:approved?"aprovado":"recusado",approved_at:approved?new Date().toISOString():null,updated_at:new Date().toISOString()};
+      if(status==="parcial"&&!allowPartialApproval)throw new Error("A aprovação parcial está desabilitada nas Configurações.");
+      const approved=status!=="recusado";
+      const patch:any={approval_status:status,approved_at:approved?new Date().toISOString():null,updated_at:new Date().toISOString()};
       if(approved&&order.status==="aguardando_aprovacao")patch.status="em_execucao";
       const {error}=await db.from("work_orders").update(patch).eq("id",orderId);if(error)throw error;
       if(patch.status)await db.from("work_order_tracking").update({status:patch.status,updated_at:new Date().toISOString()}).eq("work_order_id",orderId);
-      await load();setSuccess(approved?"Orçamento aprovado e OS liberada para execução.":"Orçamento recusado.");
+      await load();
+      setSuccess(status==="aprovado"?"Orçamento aprovado e OS liberada para execução.":status==="parcial"?"Aprovação parcial registrada e OS liberada para execução.":"Orçamento recusado.");
     }catch(e:any){setError(e.message??"Não foi possível registrar a aprovação.")}finally{setSaving(false)}
   }
 
@@ -109,13 +122,14 @@ export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { order
   async function addPayment(){
     const amount=Number(paymentAmount||0);if(amount<=0)return setError("Informe um valor de pagamento maior que zero.");
     if(amount>balance+0.009)return setError("O valor informado é maior que o saldo da OS.");
+    if(!enabledPaymentMethods.includes(paymentMethod))return setError("Essa forma de pagamento não está habilitada nas Configurações.");
     setSaving(true);setError(null);setSuccess(null);
     try{
       const {data:auth}=await supabase.auth.getUser();
       const normalizedMethod=paymentMethod.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
       const {error}=await db.from("payments").insert({work_order_id:orderId,amount,method:normalizedMethod,installments,status:"confirmado",paid_at:new Date().toISOString(),created_by:auth.user?.id??null});if(error)throw error;
       const newPaid=paid+amount;const payment_status=newPaid>=Number(order.total||0)-0.009?"pago":"parcial";
-      await db.from("work_orders").update({payment_status,updated_at:new Date().toISOString()}).eq("id",orderId);
+      const {error:orderError}=await db.from("work_orders").update({payment_status,updated_at:new Date().toISOString()}).eq("id",orderId);if(orderError)throw orderError;
       setPaymentAmount("");await load();setSuccess("Pagamento registrado.");
     }catch(e:any){setError(e.message??"Não foi possível registrar o pagamento.")}finally{setSaving(false)}
   }
@@ -130,9 +144,9 @@ export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { order
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Status" value={STATUS_LABEL[order.status as OrderStatus]??order.status}/><Metric label="Aprovação" value={String(order.approval_status??"pendente")}/><Metric label="Pagamento" value={String(order.payment_status??"pendente")}/><Metric label="Total" value={money(Number(order.total||0))}/></div>
 
-    <Card title="Fluxo da oficina" icon={RefreshCw}><div className="flex flex-wrap items-center gap-2">{workflow.map((status,index)=><span key={status} className={`rounded-full px-3 py-2 text-xs font-black ${status===order.status?"bg-[#F0B323] text-black":index<currentIndex?"bg-emerald-100 text-emerald-700":"bg-black/5 text-black/40"}`}>{STATUS_LABEL[status]}</span>)}</div>{waitingApproval&&<p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800">O orçamento precisa ser aprovado antes da execução.</p>}{waitingPayment&&<p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800">Registre o pagamento integral antes de entregar o veículo.</p>}<div className="mt-4 flex flex-wrap gap-2">{canAdvance&&nextStatus&&<button disabled={saving} onClick={()=>void updateStatus(nextStatus)} className="goldButton">Avançar para {STATUS_LABEL[nextStatus]}</button>}{userRole==="admin"&&!closed&&<button disabled={saving} onClick={()=>void updateStatus("cancelada")} className="secondaryButton text-red-700">Cancelar OS</button>}</div></Card>
+    <Card title="Fluxo da oficina" icon={RefreshCw}><div className="flex flex-wrap items-center gap-2">{workflow.map((status,index)=><span key={status} className={`rounded-full px-3 py-2 text-xs font-black ${status===order.status?"bg-[#F0B323] text-black":index<currentIndex?"bg-emerald-100 text-emerald-700":"bg-black/5 text-black/40"}`}>{STATUS_LABEL[status]}</span>)}</div>{waitingApproval&&<p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800">O orçamento precisa ser aprovado antes da execução.</p>}{waitingPayment&&<p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800">Registre o pagamento integral antes de entregar o veículo.</p>}{!requirePaymentBeforeDelivery&&nextStatus==="entregue"&&balance>0.009&&<p className="mt-4 rounded-xl bg-sky-50 p-3 text-sm font-bold text-sky-800">A oficina permite entrega com saldo em aberto. Saldo atual: {money(balance)}.</p>}<div className="mt-4 flex flex-wrap gap-2">{canAdvance&&nextStatus&&<button disabled={saving} onClick={()=>void updateStatus(nextStatus)} className="goldButton">Avançar para {STATUS_LABEL[nextStatus]}</button>}{userRole==="admin"&&!closed&&<button disabled={saving} onClick={()=>void updateStatus("cancelada")} className="secondaryButton text-red-700">Cancelar OS</button>}</div></Card>
 
-    {order.status==="aguardando_aprovacao"&&<Card title="Aprovação do orçamento" icon={CheckCircle2}><div className="flex flex-wrap gap-2"><button disabled={saving} onClick={()=>void approval(true)} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white">Aprovar orçamento</button><button disabled={saving} onClick={()=>void approval(false)} className="rounded-xl border border-red-200 px-4 py-2.5 text-sm font-black text-red-700">Recusar orçamento</button></div></Card>}
+    {order.status==="aguardando_aprovacao"&&<Card title="Aprovação do orçamento" icon={CheckCircle2}><div className="flex flex-wrap gap-2"><button disabled={saving} onClick={()=>void approval("aprovado")} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white">Aprovar orçamento</button>{allowPartialApproval&&<button disabled={saving} onClick={()=>void approval("parcial")} className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-black text-amber-800">Aprovação parcial</button>}<button disabled={saving} onClick={()=>void approval("recusado")} className="rounded-xl border border-red-200 px-4 py-2.5 text-sm font-black text-red-700">Recusar orçamento</button></div></Card>}
 
     <div className="grid gap-4 xl:grid-cols-[1.55fr_.9fr]"><div className="space-y-4">
       <Card title="Peças e mão de obra" icon={Wrench}><WorkOrderPartsPanel workOrderId={orderId} parts={parts} locked={closed}/></Card>
@@ -164,7 +178,7 @@ export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { order
         <label className="block text-xs font-black uppercase text-black/40">Previsão de entrega<input type="datetime-local" className="field mt-1" value={edit.promised_at} onChange={e=>setEdit({...edit,promised_at:e.target.value})}/></label>
         {!closed&&["admin","atendimento","tecnico"].includes(userRole)&&<button disabled={saving} onClick={()=>void saveTechnicalData()} className="goldButton mt-3 w-full">Salvar dados técnicos</button>}
       </Card>
-      <Card title="Financeiro da OS" icon={CreditCard}><div className="grid grid-cols-2 gap-3"><Metric label="Serviços" value={money(Number(order.subtotal_services||0))}/><Metric label="Peças" value={money(Number(order.subtotal_parts||0))}/><Metric label="Desconto" value={money(Number(order.discount||0))}/><Metric label="Total" value={money(Number(order.total||0))}/><Metric label="Recebido" value={money(paid)}/><Metric label="Saldo" value={money(balance)}/></div>{!closed&&balance>0.009&&["admin","financeiro"].includes(userRole)&&<div className="mt-4 grid gap-2"><input type="number" min="0.01" step="0.01" className="field" placeholder={`Valor a receber (${money(balance)})`} value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)}/><select className="field" value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value)}>{paymentMethods.map(m=><option key={m}>{m}</option>)}</select><input type="number" min="1" max="24" className="field" value={installments} onChange={e=>setInstallments(Math.max(1,Number(e.target.value)||1))}/><button disabled={saving} onClick={()=>void addPayment()} className="goldButton"><CreditCard className="size-4"/>Registrar pagamento</button></div>}{payments.length>0&&<div className="mt-4 space-y-2">{payments.map(p=><div key={p.id} className="flex items-center justify-between rounded-xl bg-black/[.03] p-3 text-xs"><span>{p.method} • {p.installments||1}x • {p.paid_at?new Date(p.paid_at).toLocaleDateString("pt-BR"):""}</span><strong>{money(Number(p.amount||0))}</strong></div>)}</div>}</Card>
+      <Card title="Financeiro da OS" icon={CreditCard}><div className="grid grid-cols-2 gap-3"><Metric label="Serviços" value={money(Number(order.subtotal_services||0))}/><Metric label="Peças" value={money(Number(order.subtotal_parts||0))}/><Metric label="Desconto" value={money(Number(order.discount||0))}/><Metric label="Total" value={money(Number(order.total||0))}/><Metric label="Recebido" value={money(paid)}/><Metric label="Saldo" value={money(balance)}/></div>{!closed&&balance>0.009&&["admin","financeiro"].includes(userRole)&&<div className="mt-4 grid gap-2"><input type="number" min="0.01" step="0.01" className="field" placeholder={`Valor a receber (${money(balance)})`} value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)}/><select className="field" value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value)}>{enabledPaymentMethods.map(m=><option key={m}>{m}</option>)}</select><input type="number" min="1" max="24" className="field" value={installments} onChange={e=>setInstallments(Math.max(1,Number(e.target.value)||1))}/><button disabled={saving||enabledPaymentMethods.length===0} onClick={()=>void addPayment()} className="goldButton"><CreditCard className="size-4"/>Registrar pagamento</button>{enabledPaymentMethods.length===0&&<p className="text-xs font-bold text-amber-700">Nenhuma forma de pagamento está habilitada nas Configurações.</p>}</div>}{payments.length>0&&<div className="mt-4 space-y-2">{payments.map(p=><div key={p.id} className="flex items-center justify-between rounded-xl bg-black/[.03] p-3 text-xs"><span>{String(p.method||"—")} • {p.installments||1}x • {p.status||"—"} • {p.paid_at?new Date(p.paid_at).toLocaleString("pt-BR"):""}</span><strong>{money(Number(p.amount||0))}</strong></div>)}</div>}</Card>
     </div></div>
   </div>;
 }
