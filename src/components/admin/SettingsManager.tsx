@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Building2, CheckCircle2, FileText, MessageCircle, Save, Settings2, ShieldCheck, WalletCards } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -8,11 +9,12 @@ type SectionId=(typeof sections)[number]["id"];
 const paymentOptions=["PIX","Dinheiro","Débito","Crédito","Transferência","Boleto","Outro"];
 
 export function SettingsManager(){
+ const queryClient=useQueryClient();
  const [form,setForm]=useState<any>(empty),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[message,setMessage]=useState(""),[active,setActive]=useState<SectionId>("company");
  useEffect(()=>{void supabase.from("app_settings").select("*").eq("id",1).maybeSingle().then(({data})=>{if(data)setForm({...empty,...data});setLoading(false)})},[]);
  const address=useMemo(()=>[form.street,form.address_number&&`nº ${form.address_number}`,form.complement,form.neighborhood,[form.city,form.state].filter(Boolean).join(" - ")].filter(Boolean).join(", "),[form]);
  function set(k:string,v:any){setForm((f:any)=>({...f,[k]:v}));setMessage("")}
- async function save(){setSaving(true);setMessage("");const {data:auth}=await supabase.auth.getUser();const {error}=await supabase.from("app_settings").upsert({...form,id:1,updated_at:new Date().toISOString(),updated_by:auth.user?.id??null});setSaving(false);setMessage(error?error.message:"Configurações salvas com sucesso.")}
+ async function save(){setSaving(true);setMessage("");const {data:auth}=await supabase.auth.getUser();const payload={...form,id:1,updated_at:new Date().toISOString(),updated_by:auth.user?.id??null};const {error}=await supabase.from("app_settings").upsert(payload);if(!error){queryClient.setQueryData(["app_settings"],payload);await queryClient.invalidateQueries({queryKey:["app_settings"]});}setSaving(false);setMessage(error?error.message:"Configurações salvas com sucesso e aplicadas imediatamente.")}
  if(loading)return <div className="rounded-2xl bg-white p-10 text-center">Carregando...</div>;
  return <div className="space-y-6"><div><p className="text-xs font-black uppercase tracking-[.18em] text-[#9B6600]">Administração</p><h2 className="mt-1 text-2xl font-black">Configurações</h2><p className="mt-1 text-sm text-black/50">Dados da empresa, documentos, mensagens, regras operacionais e formas de pagamento.</p></div>
  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{sections.map(s=>{const I=s.icon,on=active===s.id;return <button key={s.id} onClick={()=>setActive(s.id)} className={`rounded-2xl border p-4 text-left ${on?"border-[#F0B323] bg-[#F0B323]/5":"border-black/7 bg-white"}`}><div className={`flex size-10 items-center justify-center rounded-xl ${on?"bg-[#F0B323] text-black":"bg-[#F0B323]/15 text-[#8A5F00]"}`}><I className="size-5"/></div><p className="mt-3 text-sm font-black">{s.label}</p></button>})}</div>
