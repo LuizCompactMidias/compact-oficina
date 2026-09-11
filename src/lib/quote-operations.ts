@@ -47,7 +47,7 @@ export async function createQuote(payload: QuoteCreatePayload) {
 
 export async function updateQuoteStatus(id: string, status: "rascunho" | "enviado" | "aprovado" | "recusado" | "cancelado") {
   const values: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
-  if (status === "aprovado") values.approved_at = new Date().toISOString();
+  if (status === "aprovado") values["approved_at"] = new Date().toISOString();
   const { error } = await db.from("quotes").update(values).eq("id", id);
   if (error) throw asError(error, "Não foi possível atualizar o orçamento.");
 }
