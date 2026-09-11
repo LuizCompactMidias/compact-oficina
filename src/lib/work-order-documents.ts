@@ -1,5 +1,6 @@
 import { BRAND } from "@/lib/brand";
 import { getAppSettings } from "@/lib/app-settings";
+import { supabase } from "@/integrations/supabase/client";
 type Kind="os"|"orcamento"|"recibo";
 export type WorkOrderDocumentPayload={order:any;services:any[];parts:any[];payments:any[]};
 const esc=(v:unknown)=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
@@ -12,7 +13,15 @@ export async function printWorkOrderDocument(payload:WorkOrderDocumentPayload,ki
   const company=settings.trade_name||settings.company_name||BRAND.name,address=[settings.street,settings.address_number&&`nº ${settings.address_number}`,settings.neighborhood,settings.city,settings.state].filter(Boolean).join(", ");
   const customerAddress=[c.address,c.address_number,c.neighborhood,c.city,c.state].filter(Boolean).join(", ");
   const confirmed=payments.filter(p=>["confirmado","pago"].includes(String(p.status))),paid=confirmed.reduce((s,p)=>s+Number(p.amount??0),0),latest=confirmed.at(-1);const logo=new URL(BRAND.logoUrl,window.location.origin).href;
-  const rows=[...services.map(x=>({code:x.service_catalog?.code??"SERV",type:"SERVIÇO",desc:x.description,q:x.quantity,u:x.unit_price})),...parts.map(x=>({code:x.inventory_items?.sku??"PEÇA",type:"PEÇA",desc:x.description,q:x.quantity,u:x.unit_price}))];
+  const serviceIds=[...new Set(services.map(x=>x.service_id).filter(Boolean))];
+  const inventoryIds=[...new Set(parts.map(x=>x.inventory_item_id).filter(Boolean))];
+  const [serviceLookup,inventoryLookup]=await Promise.all([
+    serviceIds.length?supabase.from("service_catalog").select("id,code").in("id",serviceIds):Promise.resolve({data:[],error:null}),
+    inventoryIds.length?supabase.from("inventory_items").select("id,sku").in("id",inventoryIds):Promise.resolve({data:[],error:null}),
+  ]);
+  const serviceCodes=new Map((serviceLookup.data??[]).map((x:any)=>[x.id,x.code]));
+  const partSkus=new Map((inventoryLookup.data??[]).map((x:any)=>[x.id,x.sku]));
+  const rows=[...services.map(x=>({code:x.service_catalog?.code??serviceCodes.get(x.service_id)??"SERV",type:"SERVIÇO",desc:x.description,q:x.quantity,u:x.unit_price})),...parts.map(x=>({code:x.inventory_items?.sku??partSkus.get(x.inventory_item_id)??"PEÇA",type:"PEÇA",desc:x.description,q:x.quantity,u:x.unit_price}))];
   const table=rows.length?rows.map(x=>`<tr><td>${esc(x.q)}</td><td>${esc(x.code)}</td><td>${esc(x.desc)}</td><td class="n">${brl(x.u)}</td><td class="n">${brl(Number(x.q)*Number(x.u))}</td></tr>`).join(""):`<tr><td colspan="5" class="empty">Nenhum item lançado.</td></tr>`;
   const terms=kind==="orcamento"?settings.quote_terms:settings.work_order_terms;const headerNote=settings.document_header_note?`<div class="header-note">${esc(settings.document_header_note)}</div>`:"";const footer=[settings.document_footer_note,address,settings.phone,settings.whatsapp,settings.email].filter(Boolean).map(esc).join(" • ");
   const warrantyInfo=kind==="os"?(order.warranty_until?`<div class="terms warranty"><b>Garantia</b><p>Serviços desta OS com garantia registrada até <strong>${date(order.warranty_until)}</strong>${order.delivered_at?` • Entrega em ${date(order.delivered_at)}`:""}.</p></div>`:Number(settings.default_warranty_days??0)>0?`<div class="terms warranty"><b>Garantia padrão</b><p>${esc(settings.default_warranty_days)} dia(s) contados a partir da entrega do veículo, conforme condições e serviços registrados nesta OS.</p></div>`:""):"";
