@@ -124,10 +124,25 @@ export function useInventory() {
   return useQuery({
     queryKey: ["inventory_items"],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth.user?.id;
+      if (!userId) return [];
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role,active")
+        .eq("id", userId)
+        .maybeSingle();
+      if (!profile?.active) return [];
+      if (profile.role === "atendimento") {
+        const { data, error } = await supabase.rpc("get_frontdesk_inventory");
+        if (error) throw error;
+        return data ?? [];
+      }
+      const { data, error } = await supabase
         .from("inventory_items")
         .select("*")
         .order("name", { ascending: true });
+      if (error) throw error;
       return data ?? [];
     },
   });
