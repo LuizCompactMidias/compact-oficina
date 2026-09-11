@@ -19,6 +19,8 @@ export type WorkOrderIntakeV2Payload = {
   photos?: File[];
 };
 
+const allowedPhotoTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
 function asError(error: unknown, fallback: string) {
   if (error instanceof Error) return error;
   if (error && typeof error === "object" && "message" in error) return new Error(String((error as any).message ?? fallback));
@@ -56,7 +58,7 @@ export async function createWorkOrderIntakeV2(payload: WorkOrderIntakeV2Payload)
   const photoWarnings: string[] = [];
   for (const file of payload.photos ?? []) {
     try {
-      if (!file.type.startsWith("image/")) throw new Error(`${file.name} não é uma imagem válida.`);
+      if (!allowedPhotoTypes.has(file.type)) throw new Error(`${file.name} não está em um formato permitido. Use JPEG, PNG, WebP ou GIF.`);
       if (file.size > 10 * 1024 * 1024) throw new Error(`${file.name} ultrapassa 10 MB.`);
       const path = `${created.work_order_id}/entrada/${crypto.randomUUID()}-${safeFileName(file.name)}`;
       const { error: uploadError } = await supabase.storage.from("vehicle-photos").upload(path, file, { cacheControl: "3600", upsert: false });
