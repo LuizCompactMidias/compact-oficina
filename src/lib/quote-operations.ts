@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getAppSettings, type AppSettings } from "@/lib/app-settings";
 import type { ManualLineItem } from "@/lib/work-order-intake-v2";
 
 const db = supabase as any;
@@ -60,15 +61,21 @@ export async function convertQuoteToWorkOrder(id: string) {
   return { id: String(row.work_order_id), orderNumber: Number(row.order_number) };
 }
 
-export function quoteWhatsAppMessage(quote: any) {
+export function quoteWhatsAppMessage(quote: any, settings: AppSettings = {}) {
   const customer = quote.customers ?? {};
   const vehicle = quote.vehicles ?? {};
   const parts = (quote.quote_items ?? []).filter((item: any) => item.item_type === "part");
   const labor = (quote.quote_items ?? []).filter((item: any) => item.item_type === "service");
   const brl = (value: unknown) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value ?? 0));
+  const company = settings.trade_name || settings.company_name || "COMPACT Centro Automotivo";
+  const greeting = (settings.whatsapp_greeting || `Olá, ${customer.name ?? "cliente"}!`).replaceAll("{cliente}", String(customer.name ?? "cliente"));
+  const intro = (settings.whatsapp_quote_message || `Segue o Orçamento #${quote.quote_number} da ${company}.`)
+    .replaceAll("{cliente}", String(customer.name ?? "cliente"))
+    .replaceAll("{orcamento}", String(quote.quote_number ?? ""))
+    .replaceAll("{empresa}", company);
   const lines = [
-    `Olá, ${customer.name ?? "cliente"}!`, "",
-    `Segue o Orçamento #${quote.quote_number} da COMPACT Centro Automotivo.`,
+    greeting, "",
+    intro,
     `Veículo: ${[vehicle.brand, vehicle.model].filter(Boolean).join(" ")} • ${vehicle.plate ?? ""}`, "",
   ];
   if (parts.length) {
@@ -84,7 +91,7 @@ export function quoteWhatsAppMessage(quote: any) {
   if (Number(quote.discount ?? 0) > 0) lines.push(`Desconto: ${brl(quote.discount)}`);
   lines.push(`TOTAL: ${brl(quote.total)}`);
   if (quote.valid_until) lines.push(`Validade: ${new Date(`${quote.valid_until}T12:00:00`).toLocaleDateString("pt-BR")}`);
-  lines.push("", "Após sua aprovação, transformamos este orçamento em Ordem de Serviço.", "", "COMPACT Centro Automotivo");
+  lines.push("", "Após sua aprovação, transformamos este orçamento em Ordem de Serviço.", "", company);
   return lines.join("\n");
 }
 
@@ -92,5 +99,13 @@ export function openQuoteWhatsApp(quote: any) {
   const phone = String(quote.customers?.phone ?? "").replace(/\D/g, "");
   if (!phone) throw new Error("Cliente sem WhatsApp cadastrado.");
   const normalized = phone.startsWith("55") ? phone : `55${phone}`;
-  window.open(`https://wa.me/${normalized}?text=${encodeURIComponent(quoteWhatsAppMessage(quote))}`, "_blank", "noopener,noreferrer");
+  const popup = window.open("about:blank", "_blank", "noopener,noreferrer");
+  if (!popup) throw new Error("O navegador bloqueou a abertura do WhatsApp. Libere pop-ups e tente novamente.");
+  void getAppSettings()
+    .then((settings) => {
+      popup.location.href = `https://wa.me/${normalized}?text=${encodeURIComponent(quoteWhatsAppMessage(quote, settings))}`;
+    })
+    .catch(() => {
+      popup.location.href = `https://wa.me/${normalized}?text=${encodeURIComponent(quoteWhatsAppMessage(quote))}`;
+    });
 }
