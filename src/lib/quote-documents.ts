@@ -8,8 +8,8 @@ const date=(value:unknown)=>{if(!value)return"—";const parsed=new Date(String(
 export async function printQuoteDocument(quote:any){
   const settings:AppSettings=await getAppSettings().catch(():AppSettings=>({}));
   const customer=quote.customers??{},vehicle=quote.vehicles??{};
-  const parts=(quote.quote_items??[]).filter((item:any)=>item.item_type==="peca");
-  const labor=(quote.quote_items??[]).filter((item:any)=>item.item_type==="mao_obra");
+  const parts=(quote.quote_items??[]).filter((item:any)=>["part","peca"].includes(String(item.item_type)));
+  const labor=(quote.quote_items??[]).filter((item:any)=>["service","mao_obra"].includes(String(item.item_type)));
   const company=settings.trade_name||settings.company_name||BRAND.name;
   const phone=settings.whatsapp||settings.phone||"";
   const address=[settings.street,settings.address_number,settings.neighborhood,settings.city,settings.state].filter(Boolean).join(" • ");
