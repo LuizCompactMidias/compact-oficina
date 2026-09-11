@@ -1,31 +1,126 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, Camera, CheckCircle2, CreditCard, FileText, Loader2, Plus, ReceiptText, RefreshCw, Trash2, Wrench } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, CheckCircle2, CreditCard, FileText, Loader2, ReceiptText, RefreshCw, ShieldCheck, Wrench } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { money, ORDER_STATUSES, STATUS_LABEL, type OrderStatus } from "@/lib/porfirid-queries";
+import { money, STATUS_LABEL, type OrderStatus } from "@/lib/porfirid-queries";
 import { printWorkOrderDocument } from "@/lib/work-order-documents";
 import { CustomerTrackingPanel } from "@/components/admin/CustomerTrackingPanel";
-const db=supabase as any;
+import { WorkOrderPartsPanel } from "@/components/admin/WorkOrderPartsPanel";
+import { WorkOrderPhotosPanel } from "@/components/admin/WorkOrderPhotosPanel";
+import { ServiceExecutionCommissionPanel } from "@/components/admin/ServiceExecutionCommissionPanel";
 
-export function WorkOrderDetail({orderId,onBack}:{orderId:string;onBack:()=>void}){
- const [order,setOrder]=useState<any>(null),[services,setServices]=useState<any[]>([]),[parts,setParts]=useState<any[]>([]),[photos,setPhotos]=useState<any[]>([]),[payments,setPayments]=useState<any[]>([]),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[error,setError]=useState<string|null>(null);
- async function load(){setLoading(true);setError(null);try{const [o,s,p,ph,pay]=await Promise.all([db.from("work_orders").select("*, customers(*), vehicles(*)").eq("id",orderId).single(),db.from("work_order_services").select("*").eq("work_order_id",orderId).order("created_at"),db.from("work_order_parts").select("*").eq("work_order_id",orderId).order("created_at"),db.from("vehicle_photos").select("*").eq("work_order_id",orderId).order("created_at"),db.from("payments").select("*").eq("work_order_id",orderId).order("created_at")]);if(o.error)throw o.error;setOrder(o.data);setServices(s.data??[]);setParts(p.data??[]);setPhotos(ph.data??[]);setPayments(pay.data??[])}catch(e:any){setError(e.message??"Erro ao carregar OS")}finally{setLoading(false)}}
- useEffect(()=>{void load()},[orderId]);
- const paid=payments.filter(p=>["confirmado","pago"].includes(p.status)).reduce((s,p)=>s+Number(p.amount||0),0),balance=Math.max(Number(order?.total||0)-paid,0);
- async function updateStatus(status:OrderStatus){setSaving(true);const {error}=await db.from("work_orders").update({status,delivered_at:status==="entregue"?new Date().toISOString():order.delivered_at}).eq("id",orderId);setSaving(false);if(error)return setError(error.message);await db.from("work_order_tracking").update({status,updated_at:new Date().toISOString()}).eq("work_order_id",orderId);await load()}
- async function addLine(kind:"part"|"service"){const description=window.prompt(kind==="part"?"Descrição da peça":"Descrição do serviço");if(!description)return;const price=Number(window.prompt("Valor unitário","0")||0);const table=kind==="part"?"work_order_parts":"work_order_services";const payload=kind==="part"?{work_order_id:orderId,description,quantity:1,unit_price:price,unit_cost:0}:{work_order_id:orderId,description,quantity:1,unit_price:price,cost_price:0,status:"pendente"};const {error}=await db.from(table).insert(payload);if(error)return setError(error.message);await load()}
- async function removeLine(table:string,id:string){if(!confirm("Remover este item da OS?"))return;const {error}=await db.from(table).delete().eq("id",id);if(error)return setError(error.message);await load()}
- async function addPayment(){const amount=Number(window.prompt("Valor recebido",String(balance||0))||0);if(amount<=0)return;const method=window.prompt("Forma de pagamento","PIX")||"PIX";const {error}=await db.from("payments").insert({work_order_id:orderId,amount,method,status:"confirmado",paid_at:new Date().toISOString()});if(error)return setError(error.message);await load()}
- async function upload(files:FileList|null){if(!files?.length||!order?.vehicle_id)return;setSaving(true);for(const file of Array.from(files)){if(file.size>10*1024*1024){setError(`${file.name} ultrapassa 10 MB.`);continue}const path=`${orderId}/execucao/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"-")}`;const up=await supabase.storage.from("vehicle-photos").upload(path,file);if(up.error){setError(up.error.message);continue}await db.from("vehicle_photos").insert({work_order_id:orderId,vehicle_id:order.vehicle_id,photo_type:"execucao",storage_path:path,caption:file.name})}setSaving(false);await load()}
- if(loading)return <div className="rounded-2xl bg-white p-10 text-center"><Loader2 className="mx-auto size-6 animate-spin text-[#B97900]"/></div>;if(error&&!order)return <div className="rounded-2xl bg-red-50 p-5 text-red-700">{error}<button onClick={onBack} className="ml-3 underline">Voltar</button></div>;
- const customer=order.customers,vehicle=order.vehicles,documentPayload={order,services,parts,payments};
- return <div className="space-y-5"><div className="flex flex-col gap-4 rounded-3xl bg-[#111214] p-6 text-white sm:flex-row sm:items-center"><button onClick={onBack} className="rounded-xl border border-white/10 p-3"><ArrowLeft className="size-5"/></button><div className="flex-1"><p className="text-xs font-black uppercase tracking-[.18em] text-[#F0B323]">Ordem de serviço</p><h2 className="mt-1 text-3xl font-black">OS #{order.order_number}</h2><p className="mt-2 text-sm text-white/50">{customer?.name} • {vehicle?`${vehicle.brand} ${vehicle.model} • ${vehicle.plate}`:"Veículo"}</p></div><div className="flex flex-wrap justify-end gap-2"><button onClick={()=>printWorkOrderDocument(documentPayload,"os")} className="rounded-xl border border-white/12 px-3 py-2 text-xs font-black"><FileText className="mr-1 inline size-4"/>OS / PDF</button><button onClick={()=>printWorkOrderDocument(documentPayload,"orcamento")} className="rounded-xl border border-white/12 px-3 py-2 text-xs font-black"><ReceiptText className="mr-1 inline size-4"/>Orçamento</button>{paid>0&&<button onClick={()=>printWorkOrderDocument(documentPayload,"recibo")} className="rounded-xl bg-[#F0B323] px-3 py-2 text-xs font-black text-black">Recibo</button>}<div className="w-full text-right"><p className="text-xs text-white/40">Total</p><p className="text-2xl font-black text-[#FFC43D]">{money(Number(order.total||0))}</p></div></div></div>
- {error&&<div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div>}
- <div className="grid gap-4 xl:grid-cols-[1.6fr_.8fr]"><div className="space-y-4"><Card title="Status da OS" icon={RefreshCw}><div className="flex flex-wrap gap-2">{ORDER_STATUSES.map(status=><button disabled={saving} key={status} onClick={()=>void updateStatus(status)} className={`rounded-xl px-3 py-2 text-xs font-black ${order.status===status?"bg-[#F0B323] text-black":"border border-black/10 bg-white text-black/55"}`}>{STATUS_LABEL[status]}</button>)}</div></Card><Card title="Peças" icon={Plus} action={<button onClick={()=>void addLine("part")} className="goldButton"><Plus className="size-4"/>Adicionar</button>}>{parts.length?parts.map(x=><Line key={x.id} row={x} onRemove={()=>void removeLine("work_order_parts",x.id)}/>):<Empty text="Nenhuma peça lançada."/>}</Card><Card title="Mão de obra / serviços" icon={Wrench} action={<button onClick={()=>void addLine("service")} className="goldButton"><Plus className="size-4"/>Adicionar</button>}>{services.length?services.map(x=><Line key={x.id} row={x} onRemove={()=>void removeLine("work_order_services",x.id)}/>):<Empty text="Nenhum serviço lançado."/>}</Card><Card title="Fotos da OS" icon={Camera} action={<label className="goldButton cursor-pointer"><Camera className="size-4"/>Enviar fotos<input type="file" multiple accept="image/*" className="hidden" onChange={e=>void upload(e.target.files)}/></label>}>{photos.length?<div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{photos.map(p=><Photo key={p.id} photo={p}/>)}</div>:<Empty text="Nenhuma foto registrada."/>}</Card><Card title="Acompanhamento e WhatsApp" icon={CheckCircle2}><CustomerTrackingPanel order={order}/></Card></div>
- <div className="space-y-4"><Card title="Cliente e veículo" icon={CheckCircle2}><Info label="Cliente" value={customer?.name}/><Info label="Telefone" value={customer?.phone}/><Info label="Veículo" value={vehicle?`${vehicle.brand} ${vehicle.model}`:null}/><Info label="Placa" value={vehicle?.plate}/><Info label="KM entrada" value={order.mileage_in?Number(order.mileage_in).toLocaleString("pt-BR")+" km":null}/><Info label="Combustível" value={order.fuel_level}/><Info label="Previsão" value={order.promised_at?new Date(order.promised_at).toLocaleString("pt-BR"):null}/></Card><Card title="Relato e diagnóstico" icon={Wrench}><Info label="Relato do cliente" value={order.customer_report}/><Info label="Diagnóstico" value={order.diagnosis}/><Info label="Observações internas" value={order.internal_notes}/></Card><Card title="Financeiro da OS" icon={CreditCard} action={<button onClick={()=>void addPayment()} className="goldButton"><CreditCard className="size-4"/>Receber</button>}><div className="grid grid-cols-2 gap-3"><Metric label="Total" value={money(Number(order.total||0))}/><Metric label="Recebido" value={money(paid)}/><Metric label="Saldo" value={money(balance)}/><Metric label="Status" value={balance<=0?"Pago":"Pendente"}/></div>{payments.length>0&&<div className="mt-4 space-y-2">{payments.map(p=><div key={p.id} className="flex items-center justify-between rounded-xl bg-black/[.03] p-3 text-xs"><span>{p.method}</span><strong>{money(Number(p.amount||0))}</strong></div>)}</div>}</Card></div></div></div>;
+const db = supabase as any;
+const workflow: OrderStatus[] = ["recepcao","diagnostico","aguardando_aprovacao","em_execucao","finalizacao","pronto_entrega","entregue"];
+const paymentMethods = ["PIX","Dinheiro","Débito","Crédito","Transferência","Outro"];
+
+export function WorkOrderDetail({ orderId, onBack, userRole = "admin" }: { orderId: string; onBack: () => void; userRole?: string }) {
+  const [order,setOrder]=useState<any>(null);
+  const [services,setServices]=useState<any[]>([]);
+  const [parts,setParts]=useState<any[]>([]);
+  const [photos,setPhotos]=useState<any[]>([]);
+  const [payments,setPayments]=useState<any[]>([]);
+  const [checklist,setChecklist]=useState<any>(null);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState<string|null>(null);
+  const [success,setSuccess]=useState<string|null>(null);
+  const [paymentAmount,setPaymentAmount]=useState("");
+  const [paymentMethod,setPaymentMethod]=useState("PIX");
+  const [installments,setInstallments]=useState(1);
+  const [edit,setEdit]=useState({diagnosis:"",customer_report:"",internal_notes:"",promised_at:""});
+
+  async function load(){
+    setLoading(true);setError(null);
+    try{
+      const [o,s,p,ph,pay,cl]=await Promise.all([
+        db.from("work_orders").select("*, customers(*), vehicles(*)").eq("id",orderId).single(),
+        db.from("work_order_services").select("*").eq("work_order_id",orderId).order("created_at"),
+        db.from("work_order_parts").select("*").eq("work_order_id",orderId).order("created_at"),
+        db.from("vehicle_photos").select("*").eq("work_order_id",orderId).order("created_at"),
+        db.from("payments").select("*").eq("work_order_id",orderId).order("created_at"),
+        db.from("vehicle_checklists").select("*").eq("work_order_id",orderId).maybeSingle(),
+      ]);
+      if(o.error)throw o.error;
+      setOrder(o.data);setServices(s.data??[]);setParts(p.data??[]);setPhotos(ph.data??[]);setPayments(pay.data??[]);setChecklist(cl.data??null);
+      setEdit({diagnosis:o.data?.diagnosis??"",customer_report:o.data?.customer_report??"",internal_notes:o.data?.internal_notes??"",promised_at:o.data?.promised_at?String(o.data.promised_at).slice(0,16):""});
+    }catch(e:any){setError(e.message??"Erro ao carregar OS")}finally{setLoading(false)}
+  }
+  useEffect(()=>{void load()},[orderId]);
+
+  const paid=useMemo(()=>payments.filter(p=>["confirmado","pago"].includes(p.status)).reduce((s,p)=>s+Number(p.amount||0),0),[payments]);
+  const balance=Math.max(Number(order?.total||0)-paid,0);
+  const currentIndex=order?workflow.indexOf(order.status as OrderStatus):-1;
+  const nextStatus=currentIndex>=0&&currentIndex<workflow.length-1?workflow[currentIndex+1]:null;
+  const waitingApproval=order?.status==="aguardando_aprovacao"&&!["aprovado","parcial"].includes(order?.approval_status);
+  const waitingPayment=nextStatus==="entregue"&&balance>0.009;
+  const closed=["entregue","cancelada"].includes(order?.status);
+  const canAdvance=Boolean(nextStatus)&&!waitingApproval&&!waitingPayment&&!closed;
+  const checklistDone=checklist?Object.keys(checklist).filter(k=>k.endsWith("_checked")&&checklist[k]).length:0;
+
+  async function updateStatus(status:OrderStatus){
+    setSaving(true);setError(null);setSuccess(null);
+    try{
+      if(status==="em_execucao"&&!["aprovado","parcial"].includes(order.approval_status))throw new Error("Aprove o orçamento antes de iniciar a execução.");
+      if(status==="entregue"&&balance>0.009)throw new Error("Registre o pagamento integral antes da entrega.");
+      const patch:any={status,updated_at:new Date().toISOString()};
+      if(status==="entregue")patch.delivered_at=new Date().toISOString();
+      const {error}=await db.from("work_orders").update(patch).eq("id",orderId);if(error)throw error;
+      await db.from("work_order_tracking").update({status,updated_at:new Date().toISOString()}).eq("work_order_id",orderId);
+      await load();setSuccess(`Status alterado para ${STATUS_LABEL[status]??status}.`);
+    }catch(e:any){setError(e.message??"Não foi possível alterar o status.")}finally{setSaving(false)}
+  }
+  async function approval(approved:boolean){
+    setSaving(true);setError(null);setSuccess(null);
+    try{
+      const patch:any={approval_status:approved?"aprovado":"recusado",approved_at:approved?new Date().toISOString():null,updated_at:new Date().toISOString()};
+      if(approved&&order.status==="aguardando_aprovacao")patch.status="em_execucao";
+      const {error}=await db.from("work_orders").update(patch).eq("id",orderId);if(error)throw error;
+      if(patch.status)await db.from("work_order_tracking").update({status:patch.status,updated_at:new Date().toISOString()}).eq("work_order_id",orderId);
+      await load();setSuccess(approved?"Orçamento aprovado e OS liberada para execução.":"Orçamento recusado.");
+    }catch(e:any){setError(e.message??"Não foi possível registrar a aprovação.")}finally{setSaving(false)}
+  }
+  async function saveNotes(){
+    setSaving(true);setError(null);
+    try{
+      const {error}=await db.from("work_orders").update({diagnosis:edit.diagnosis.trim()||null,customer_report:edit.customer_report.trim()||null,internal_notes:edit.internal_notes.trim()||null,promised_at:edit.promised_at?new Date(edit.promised_at).toISOString():null,updated_at:new Date().toISOString()}).eq("id",orderId);if(error)throw error;
+      await load();setSuccess("Dados técnicos da OS atualizados.");
+    }catch(e:any){setError(e.message??"Não foi possível salvar os dados.")}finally{setSaving(false)}
+  }
+  async function addPayment(){
+    const amount=Number(paymentAmount||0);if(amount<=0)return setError("Informe um valor de pagamento maior que zero.");
+    setSaving(true);setError(null);setSuccess(null);
+    try{
+      const {data:auth}=await supabase.auth.getUser();
+      const {error}=await db.from("payments").insert({work_order_id:orderId,amount,method:paymentMethod.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""),installments,status:"confirmado",paid_at:new Date().toISOString(),created_by:auth.user?.id??null});if(error)throw error;
+      const newPaid=paid+amount;const payment_status=newPaid>=Number(order.total||0)-0.009?"pago":"parcial";
+      await db.from("work_orders").update({payment_status,updated_at:new Date().toISOString()}).eq("id",orderId);
+      setPaymentAmount("");await load();setSuccess("Pagamento registrado.");
+    }catch(e:any){setError(e.message??"Não foi possível registrar o pagamento.")}finally{setSaving(false)}
+  }
+
+  if(loading)return <div className="rounded-2xl bg-white p-10 text-center"><Loader2 className="mx-auto size-6 animate-spin text-[#B97900]"/></div>;
+  if(error&&!order)return <div className="rounded-2xl bg-red-50 p-5 text-red-700">{error}<button onClick={onBack} className="ml-3 underline">Voltar</button></div>;
+  const customer=order.customers,vehicle=order.vehicles,documentPayload={order,services,parts,payments};
+
+  return <div className="space-y-5">
+    <div className="flex flex-col gap-4 rounded-3xl bg-[#111214] p-6 text-white sm:flex-row sm:items-center"><button onClick={onBack} className="rounded-xl border border-white/10 p-3"><ArrowLeft className="size-5"/></button><div className="flex-1"><p className="text-xs font-black uppercase tracking-[.18em] text-[#F0B323]">Ordem de serviço</p><h2 className="mt-1 text-3xl font-black">OS #{order.order_number}</h2><p className="mt-2 text-sm text-white/50">{customer?.name} • {vehicle?`${vehicle.brand} ${vehicle.model} • ${vehicle.plate}`:"Veículo"}</p></div><div className="flex flex-wrap justify-end gap-2"><button onClick={()=>printWorkOrderDocument(documentPayload,"os")} className="rounded-xl border border-white/12 px-3 py-2 text-xs font-black"><FileText className="mr-1 inline size-4"/>OS / PDF</button><button onClick={()=>printWorkOrderDocument(documentPayload,"orcamento")} className="rounded-xl border border-white/12 px-3 py-2 text-xs font-black"><ReceiptText className="mr-1 inline size-4"/>Orçamento</button>{paid>0&&<button onClick={()=>printWorkOrderDocument(documentPayload,"recibo")} className="rounded-xl bg-[#F0B323] px-3 py-2 text-xs font-black text-black">Recibo</button>}<div className="w-full text-right"><p className="text-xs text-white/40">Total</p><p className="text-2xl font-black text-[#FFC43D]">{money(Number(order.total||0))}</p></div></div></div>
+    {(error||success)&&<div className={`rounded-xl p-3 text-sm font-bold ${error?"bg-red-50 text-red-700":"bg-emerald-50 text-emerald-700"}`}>{error??success}</div>}
+
+    <Card title="Fluxo da oficina" icon={RefreshCw}><div className="flex flex-wrap items-center gap-2">{workflow.map((status,index)=><span key={status} className={`rounded-full px-3 py-2 text-xs font-black ${status===order.status?"bg-[#F0B323] text-black":index<currentIndex?"bg-emerald-100 text-emerald-700":"bg-black/5 text-black/40"}`}>{STATUS_LABEL[status]}</span>)}</div>{waitingApproval&&<p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800">O orçamento precisa ser aprovado antes da execução.</p>}{waitingPayment&&<p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800">Registre o pagamento integral antes de entregar o veículo.</p>}<div className="mt-4 flex flex-wrap gap-2">{canAdvance&&nextStatus&&<button disabled={saving} onClick={()=>void updateStatus(nextStatus)} className="goldButton">Avançar para {STATUS_LABEL[nextStatus]}</button>}{userRole==="admin"&&!closed&&<button disabled={saving} onClick={()=>void updateStatus("cancelada")} className="secondaryButton text-red-700">Cancelar OS</button>}</div></Card>
+
+    {order.status==="aguardando_aprovacao"&&<Card title="Aprovação do orçamento" icon={CheckCircle2}><div className="flex flex-wrap gap-2"><button disabled={saving} onClick={()=>void approval(true)} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white">Aprovar orçamento</button><button disabled={saving} onClick={()=>void approval(false)} className="rounded-xl border border-red-200 px-4 py-2.5 text-sm font-black text-red-700">Recusar orçamento</button></div></Card>}
+
+    <div className="grid gap-4 xl:grid-cols-[1.6fr_.8fr]"><div className="space-y-4">
+      <Card title="Peças e mão de obra" icon={Wrench}><WorkOrderPartsPanel workOrderId={orderId} parts={parts} locked={closed}/></Card>
+      <ServiceExecutionCommissionPanel workOrderId={orderId} services={services} locked={closed} userRole={userRole}/>
+      <Card title="Fotos antes e depois" icon={ShieldCheck}><WorkOrderPhotosPanel workOrderId={orderId} vehicleId={order.vehicle_id} photos={photos} locked={closed}/></Card>
+      <Card title="Acompanhamento e WhatsApp" icon={CheckCircle2}><CustomerTrackingPanel order={order}/></Card>
+    </div><div className="space-y-4">
+      <Card title="Cliente, veículo e checklist" icon={ShieldCheck}><Info label="Cliente" value={customer?.name}/><Info label="Telefone" value={customer?.phone}/><Info label="Veículo" value={vehicle?`${vehicle.brand} ${vehicle.model}`:null}/><Info label="Placa" value={vehicle?.plate}/><Info label="KM entrada" value={order.mileage_in?Number(order.mileage_in).toLocaleString("pt-BR")+" km":null}/><Info label="Combustível" value={order.fuel_level}/><Info label="Checklist" value={checklist?`${checklistDone}/15 itens conferidos`:"Não preenchido"}/>{checklist?.damage_notes&&<Info label="Avarias" value={checklist.damage_notes}/>}</Card>
+      <Card title="Dados técnicos da OS" icon={Wrench}><label className="text-xs font-black uppercase text-black/40">Relato do cliente<textarea className="field mt-1 mb-3" rows={3} value={edit.customer_report} onChange={e=>setEdit({...edit,customer_report:e.target.value})}/></label><label className="text-xs font-black uppercase text-black/40">Diagnóstico<textarea className="field mt-1 mb-3" rows={3} value={edit.diagnosis} onChange={e=>setEdit({...edit,diagnosis:e.target.value})}/></label><label className="text-xs font-black uppercase text-black/40">Observações internas<textarea className="field mt-1 mb-3" rows={3} value={edit.internal_notes} onChange={e=>setEdit({...edit,internal_notes:e.target.value})}/></label><label className="text-xs font-black uppercase text-black/40">Previsão de entrega<input type="datetime-local" className="field mt-1" value={edit.promised_at} onChange={e=>setEdit({...edit,promised_at:e.target.value})}/></label>{!closed&&<button disabled={saving} onClick={()=>void saveNotes()} className="goldButton mt-3 w-full">Salvar dados técnicos</button>}</Card>
+      <Card title="Financeiro da OS" icon={CreditCard}><div className="grid grid-cols-2 gap-3"><Metric label="Total" value={money(Number(order.total||0))}/><Metric label="Recebido" value={money(paid)}/><Metric label="Saldo" value={money(balance)}/><Metric label="Status" value={balance<=0.009?"Pago":paid>0?"Parcial":"Pendente"}/></div>{!closed&&balance>0.009&&<div className="mt-4 grid gap-2"><input type="number" min="0.01" step="0.01" className="field" placeholder={`Valor a receber (${money(balance)})`} value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)}/><select className="field" value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value)}>{paymentMethods.map(m=><option key={m}>{m}</option>)}</select><input type="number" min="1" max="24" className="field" value={installments} onChange={e=>setInstallments(Math.max(1,Number(e.target.value)||1))}/><button disabled={saving} onClick={()=>void addPayment()} className="goldButton"><CreditCard className="size-4"/>Registrar pagamento</button></div>}{payments.length>0&&<div className="mt-4 space-y-2">{payments.map(p=><div key={p.id} className="flex items-center justify-between rounded-xl bg-black/[.03] p-3 text-xs"><span>{p.method} • {p.installments||1}x</span><strong>{money(Number(p.amount||0))}</strong></div>)}</div>}</Card>
+    </div></div>
+  </div>;
 }
-function Card({title,icon:Icon,action,children}:{title:string;icon:any;action?:React.ReactNode;children:React.ReactNode}){return <section className="rounded-2xl border border-black/6 bg-white p-5 shadow-sm"><div className="mb-4 flex items-center gap-3"><div className="flex size-9 items-center justify-center rounded-xl bg-[#F0B323]/15 text-[#8A5F00]"><Icon className="size-4"/></div><h3 className="flex-1 font-black">{title}</h3>{action}</div>{children}</section>}
-function Line({row,onRemove}:{row:any;onRemove:()=>void}){return <div className="mb-2 flex items-center gap-3 rounded-xl bg-black/[.025] p-3"><div className="flex-1"><p className="text-sm font-black">{row.description}</p><p className="mt-1 text-xs text-black/40">{Number(row.quantity||0)} × {money(Number(row.unit_price||0))}</p></div><strong>{money(Number(row.quantity||0)*Number(row.unit_price||0))}</strong><button onClick={onRemove} className="rounded-lg border border-red-200 p-2 text-red-600"><Trash2 className="size-4"/></button></div>}
-function Info({label,value}:{label:string;value:any}){if(!value)return null;return <div className="border-b border-black/5 py-2 last:border-0"><p className="text-[10px] font-black uppercase tracking-wider text-black/35">{label}</p><p className="mt-1 text-sm font-semibold">{String(value)}</p></div>}
+function Card({title,icon:Icon,children}:{title:string;icon:any;children:React.ReactNode}){return <section className="rounded-2xl border border-black/6 bg-white p-5 shadow-sm"><div className="mb-4 flex items-center gap-3"><div className="flex size-9 items-center justify-center rounded-xl bg-[#F0B323]/15 text-[#8A5F00]"><Icon className="size-4"/></div><h3 className="flex-1 font-black">{title}</h3></div>{children}</section>}
+function Info({label,value}:{label:string;value:any}){if(value===null||value===undefined||value==="")return null;return <div className="border-b border-black/5 py-2 last:border-0"><p className="text-[10px] font-black uppercase tracking-wider text-black/35">{label}</p><p className="mt-1 text-sm font-semibold">{String(value)}</p></div>}
 function Metric({label,value}:{label:string;value:string}){return <div className="rounded-xl bg-black/[.025] p-3"><p className="text-[10px] font-black uppercase tracking-wider text-black/35">{label}</p><p className="mt-1 font-black">{value}</p></div>}
-function Empty({text}:{text:string}){return <div className="rounded-xl border border-dashed border-black/10 p-5 text-center text-sm text-black/40">{text}</div>}
-function Photo({photo}:{photo:any}){const [url,setUrl]=useState<string|null>(null);useEffect(()=>{void supabase.storage.from("vehicle-photos").createSignedUrl(photo.storage_path,3600).then(({data})=>setUrl(data?.signedUrl??null))},[photo.storage_path]);return <div className="overflow-hidden rounded-xl border border-black/8 bg-black/[.03]">{url?<img src={url} alt={photo.caption??"Foto"} className="aspect-video w-full object-cover"/>:<div className="aspect-video animate-pulse bg-black/5"/>}<p className="truncate p-2 text-[10px] font-bold">{photo.caption??photo.photo_type}</p></div>}
