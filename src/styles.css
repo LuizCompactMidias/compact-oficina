@@ -27,6 +27,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .goldButton:hover { background:#ffc43d; transform:translateY(-1px); }
 .goldButton:disabled { opacity:.5; cursor:not-allowed; transform:none; }
 .secondaryButton { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border:1px solid rgba(0,0,0,.1); border-radius:.75rem; background:#fff; padding:.72rem 1rem; color:#17181a; font-size:.875rem; font-weight:800; cursor:pointer; }
+aside img[src="/compact-icon.webp"] { width:3.5rem !important; height:3.5rem !important; }
 @keyframes compactFloat { 0%,100% { transform:translateY(0) } 50% { transform:translateY(-8px) } }
 .compact-float { animation:compactFloat 5s ease-in-out infinite; }
 @media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto}.compact-float{animation:none} }
